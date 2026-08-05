@@ -1,0 +1,25 @@
+{
+  "name": "literary-content-agent",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "apps/web",
+    "packages/video"
+  ],
+  "scripts": {
+    "dev": "concurrently -n web,api,worker -c cyan,green,magenta \"npm run dev:web\" \"npm run dev:api\" \"npm run dev:worker\"",
+    "dev:web": "npm --workspace @content-agent/web run dev",
+    "dev:api": ".venv\\Scripts\\python.exe -m uvicorn app.main:app --reload --app-dir services/api --host 127.0.0.1 --port 8000",
+    "dev:worker": ".venv\\Scripts\\python.exe -m app.worker --app-dir services/api",
+    "build": "npm --workspace @content-agent/video run typecheck && npm --workspace @content-agent/web run build",
+    "test": "npm --workspace @content-agent/video run test && npm --workspace @content-agent/web run test && .venv\\Scripts\\python.exe -m pytest services/api/tests",
+    "typecheck": "npm --workspace @content-agent/video run typecheck && npm --workspace @content-agent/web run typecheck",
+    "doctor": ".venv\\Scripts\\python.exe -m app.doctor --app-dir services/api",
+    "e2e:mock": ".venv\\Scripts\\python.exe services/api/scripts/e2e_mock.py",
+    "db:migrate": ".venv\\Scripts\\python.exe -m alembic -c services/api/alembic.ini upgrade head",
+    "worker:once": ".venv\\Scripts\\python.exe -m app.worker --once --app-dir services/api"
+  },
+  "devDependencies": {
+    "concurrently": "9.2.4"
+  }
+}
