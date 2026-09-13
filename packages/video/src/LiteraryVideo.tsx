@@ -39,13 +39,13 @@ const Backdrop: React.FC<{scene: VideoScene}> = ({scene}) => {
             height: "100%",
             objectFit: "cover",
             transform: `scale(${1.06 + progress * 0.08}) translateY(${progress * -1.5}%)`,
-            filter: "saturate(.78) contrast(1.08) brightness(.7)",
+            filter: "saturate(.86) contrast(1.04) brightness(.92)",
           }}
         />
         <AbsoluteFill
           style={{
             background:
-              "linear-gradient(180deg, rgba(18,17,25,.18) 0%, rgba(18,17,25,.58) 48%, rgba(18,17,25,.98) 100%)",
+              "linear-gradient(180deg, rgba(18,17,25,.12) 0%, rgba(18,17,25,.35) 48%, rgba(18,17,25,.95) 100%)",
           }}
         />
       </AbsoluteFill>
@@ -102,7 +102,7 @@ const SceneView: React.FC<{scene: VideoScene; sceneNumber: number}> = ({scene, s
         }}
       >
         <div style={{fontSize: 30, color: COLORS.gold, marginBottom: 24, letterSpacing: 3}}>{scene.title}</div>
-        <div style={{fontFamily: '"STSong", "SimSun", serif', fontSize: 70, lineHeight: 1.35, fontWeight: 650, textShadow: "0 6px 28px #000"}}>
+        <div style={{fontFamily: '"STSong", "SimSun", serif', fontSize: 70, lineHeight: 1.35, fontWeight: 650, whiteSpace: "pre-line", textShadow: "0 6px 28px #000"}}>
           {scene.onScreenText}
         </div>
       </div>
@@ -169,7 +169,7 @@ export const Cover: React.FC<LiteraryVideoProps> = ({title, scenes}) => {
         <div style={{fontSize: 30, color: COLORS.gold, letterSpacing: 8, marginBottom: 36}}>深度文学解读</div>
         <div style={{fontFamily: '"STSong", "SimSun", serif', fontSize: 94, lineHeight: 1.2, fontWeight: 700, textShadow: "0 8px 34px #000"}}>{title}</div>
         <div style={{marginTop: 42, width: 160, height: 5, backgroundColor: COLORS.gold}} />
-        <div style={{marginTop: 36, fontSize: 44, lineHeight: 1.45}}>{first.onScreenText}</div>
+        <div style={{marginTop: 36, fontSize: 44, lineHeight: 1.45, whiteSpace: "pre-line"}}>{first.onScreenText}</div>
       </div>
     </AbsoluteFill>
   );

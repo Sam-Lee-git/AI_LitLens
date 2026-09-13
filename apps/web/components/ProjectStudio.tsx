@@ -7,8 +7,8 @@ import {SceneCard} from "./SceneCard";
 import {VideoPreview} from "./VideoPreview";
 
 const STATUS: Record<Project["status"], string> = {
-  draft: "等待资料",
-  sources_ready: "资料就绪",
+  draft: "等待开始",
+  sources_ready: "可重新分析",
   analyzing: "分析中",
   angles_ready: "选择角度",
   storyboard_review: "审核故事板",
@@ -102,7 +102,7 @@ export function ProjectStudio() {
     let created: Project | null = null;
     await act(async () => {
       created = await projectApi.create(title, description);
-    }, "项目已创建");
+    }, "大模型已经开始理解这部作品");
     if (created) setActiveId((created as Project).id);
   };
 
@@ -134,7 +134,7 @@ export function ProjectStudio() {
       <section className="workspace">
         {error ? <div className="toast error" onClick={() => setError("")}>{error}</div> : null}
         {notice ? <div className="toast notice" onClick={() => setNotice("")}>{notice}</div> : null}
-        {!project ? <Welcome /> : (
+        {!project ? <Welcome onCreate={createProject} busy={busy} /> : (
           <>
             <ProjectHeader
               project={project}
@@ -149,14 +149,16 @@ export function ProjectStudio() {
               }}
             />
             {ACTIVE.has(project.status) ? <ProgressPanel project={project} event={progress} /> : null}
-            <SourcePanel
-              project={project}
-              busy={busy}
-              onUpload={(form) => act(() => api(`/projects/${project.id}/sources`, {method: "POST", body: form}), "资料已加入项目")}
-              onAnalyze={() => act(() => projectApi.analyze(project.id), "分析任务已经开始")}
-            />
             {project.status === "angles_ready" ? (
               <AnglePicker project={project} busy={busy} onChoose={(angleId) => act(() => projectApi.chooseAngle(project.id, angleId), "正在生成故事板")} />
+            ) : null}
+            {["draft", "sources_ready", "angles_ready"].includes(project.status) ? (
+              <SourcePanel
+                project={project}
+                busy={busy}
+                onUpload={(form) => act(() => api(`/projects/${project.id}/sources`, {method: "POST", body: form}), "资料已加入项目")}
+                onAnalyze={() => act(() => projectApi.analyze(project.id), "分析任务已经开始")}
+              />
             ) : null}
             {board && ["storyboard_review", "completed"].includes(project.status) ? (
               <StoryboardEditor
@@ -212,20 +214,39 @@ function NewProjectForm({onCreate, busy}: {onCreate: (title: string, description
   };
   return open ? (
     <form className="new-project-form" onSubmit={submit}>
-      <input autoFocus placeholder="书名或项目名" value={title} onChange={(event) => setTitle(event.target.value)} />
-      <textarea placeholder="想探讨的问题（可选）" value={description} onChange={(event) => setDescription(event.target.value)} />
-      <div><button className="primary small" disabled={busy}>创建</button><button type="button" className="ghost small" onClick={() => setOpen(false)}>取消</button></div>
+      <input autoFocus placeholder="输入名著名称" value={title} onChange={(event) => setTitle(event.target.value)} />
+      <textarea placeholder="想重点关注什么（可选）" value={description} onChange={(event) => setDescription(event.target.value)} />
+      <div><button className="primary small" disabled={busy}>{busy ? "正在启动…" : "开始解读"}</button><button type="button" className="ghost small" onClick={() => setOpen(false)}>取消</button></div>
     </form>
-  ) : <button className="new-project" onClick={() => setOpen(true)}>＋ 新建解读</button>;
+  ) : <button className="new-project" onClick={() => setOpen(true)}>＋ 输入一本名著</button>;
 }
 
-function Welcome() {
+function Welcome({onCreate, busy}: {onCreate: (title: string, description: string) => Promise<void>; busy: boolean}) {
+  const [title, setTitle] = useState("");
+  const [focus, setFocus] = useState("");
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!title.trim()) return;
+    await onCreate(title, focus);
+  };
   return (
     <div className="welcome">
-      <div className="eyebrow">FROM SOURCE TO STORY</div>
-      <h1>让复杂的书，<br />变成值得听的观点。</h1>
-      <p>上传一本书，保留每个论断的出处。选择角度、审核场景，然后生成语音、插画与可发布的竖屏视频。</p>
-      <div className="flow"><span>01 导入资料</span><i /><span>02 选择角度</span><i /><span>03 审核场景</span><i /><span>04 生成成品</span></div>
+      <div className="eyebrow">FROM TITLE TO STORY</div>
+      <h1>说出一本名著，<br />剩下的交给 AI。</h1>
+      <p>输入作品名，大模型会理解人物、情节与主题，提出五个值得讲的角度，再生成可编辑的竖屏内容。</p>
+      <form className="title-launch" onSubmit={submit}>
+        <label>
+          <span>名著名称</span>
+          <input autoFocus placeholder="例如：红楼梦、罪与罚、百年孤独" value={title} onChange={(event) => setTitle(event.target.value)} />
+        </label>
+        <label>
+          <span>特别想讲什么？（可选）</span>
+          <input placeholder="例如：人物命运、爱情观、为什么今天还值得读" value={focus} onChange={(event) => setFocus(event.target.value)} />
+        </label>
+        <button className="primary launch-button" disabled={busy || !title.trim()}>{busy ? "AI 正在启动…" : "让 AI 开始解读 →"}</button>
+        <small>无需先找电子书。需要逐页出处时，可在之后补充 PDF 或 EPUB。</small>
+      </form>
+      <div className="flow"><span>01 输入书名</span><i /><span>02 选择角度</span><i /><span>03 审核场景</span><i /><span>04 生成成品</span></div>
     </div>
   );
 }
@@ -233,7 +254,7 @@ function Welcome() {
 function ProjectHeader({project, busy, onDelete}: {project: Project; busy: boolean; onDelete: () => void}) {
   return (
     <header className="project-header">
-      <div><div className="eyebrow">LITERARY PROJECT</div><h1>《{project.title}》</h1><p>{project.description || "从原文中找到一个值得讲的观点。"}</p></div>
+      <div><div className="eyebrow">LITERARY PROJECT</div><h1>《{project.title}》</h1><p>{project.description || "从作品知识中找到一个值得讲的观点。"}</p></div>
       <div className="header-actions"><span className={`status-pill ${project.status}`}>{STATUS[project.status]}</span><button className="ghost danger" disabled={busy} onClick={onDelete}>删除项目</button></div>
     </header>
   );
@@ -261,12 +282,17 @@ function SourcePanel({project, busy, onUpload, onAnalyze}: {project: Project; bu
     await onUpload(form); setTitle(""); setText(""); setFile(null);
   };
   return (
-    <section className="panel sources-panel">
-      <div className="section-heading"><div><span className="step-number">01</span><div><h2>资料库</h2><p>所有观点都从这里出发，并保留原文定位。</p></div></div>{hasPrimary && !ACTIVE.has(project.status) && project.status !== "completed" ? <button className="primary" disabled={busy} onClick={onAnalyze}>分析资料 →</button> : null}</div>
-      {project.sources.length ? <div className="source-list">{project.sources.map((source) => <div className="source-chip" key={source.id}><span className="file-icon">{source.source_type === "pdf" ? "PDF" : source.source_type === "epub" ? "EPUB" : "TXT"}</span><div><strong>{source.title}</strong><small>{source.kind === "primary" ? "主书" : "补充资料"} · {source.char_count.toLocaleString()} 字符</small></div></div>)}</div> : null}
-      {!hasPrimary || project.sources.filter((source) => source.kind === "supplement").length < 5 ? (
+    <section className="panel sources-panel optional-panel">
+      <div className="section-heading"><div><span className="step-number optional">+</span><div><h2>出处增强 <small>可选</small></h2><p>AI 已可根据书名工作；上传原著后，可重新分析并获得页码或章节定位。</p></div></div>{project.status === "draft" ? <button className="primary" disabled={busy} onClick={onAnalyze}>直接让 AI 解读 →</button> : project.status === "sources_ready" ? <button className="primary" disabled={busy} onClick={onAnalyze}>用新增资料重新分析 →</button> : null}</div>
+      {project.sources.length ? <div className="source-list">{project.sources.map((source) => {
+        const isModel = source.kind === "model";
+        const icon = isModel ? "AI" : source.source_type === "pdf" ? "PDF" : source.source_type === "epub" ? "EPUB" : "TXT";
+        const detail = isModel ? "模型作品知识 · 非原文出处" : `${source.kind === "primary" ? "原著" : "补充资料"} · ${source.char_count.toLocaleString()} 字符`;
+        return <div className={`source-chip ${isModel ? "model-source" : ""}`} key={source.id}><span className="file-icon">{icon}</span><div><strong>{source.title}</strong><small>{detail}</small></div></div>;
+      })}</div> : null}
+      {!ACTIVE.has(project.status) && project.status !== "completed" && (!hasPrimary || project.sources.filter((source) => source.kind === "supplement").length < 5) ? (
         <form className="source-form" onSubmit={submit}>
-          <div className="tabs"><button type="button" className={tab === "primary" ? "active" : ""} disabled={hasPrimary} onClick={() => setTab("primary")}>上传主书</button><button type="button" className={tab === "supplement" ? "active" : ""} onClick={() => setTab("supplement")}>粘贴补充资料</button></div>
+          <div className="tabs"><button type="button" className={tab === "primary" ? "active" : ""} disabled={hasPrimary} onClick={() => setTab("primary")}>原著文件（可选）</button><button type="button" className={tab === "supplement" ? "active" : ""} onClick={() => setTab("supplement")}>补充笔记（可选）</button></div>
           <input placeholder="资料标题" value={title} onChange={(event) => setTitle(event.target.value)} />
           {tab === "primary" ? <label className="drop-zone"><input type="file" accept=".pdf,.epub" onChange={(event) => setFile(event.target.files?.[0] ?? null)} /><strong>{file ? file.name : "选择 PDF 或 EPUB"}</strong><span>文字型文件，最大 150 MB；扫描件暂不支持</span></label> : <textarea rows={6} placeholder="粘贴读书笔记、研究文章或自己的想法……" value={text} onChange={(event) => setText(event.target.value)} />}
           <button className="secondary" disabled={busy || (tab === "primary" ? !file : !text.trim())}>添加资料</button>
@@ -277,10 +303,11 @@ function SourcePanel({project, busy, onUpload, onAnalyze}: {project: Project; bu
 }
 
 function AnglePicker({project, busy, onChoose}: {project: Project; busy: boolean; onChoose: (id: string) => Promise<unknown>}) {
+  const modelKnowledgeOnly = project.sources.length > 0 && project.sources.every((source) => source.kind === "model");
   return (
     <section className="panel">
-      <div className="section-heading"><div><span className="step-number">02</span><div><h2>选择一个值得讲的角度</h2><p>五个方向都来自当前资料，选择后才会生成完整场景。</p></div></div></div>
-      <div className="angle-grid">{project.angles.map((angle) => <button className="angle-card" key={angle.id} disabled={busy} onClick={() => onChoose(angle.id)}><span>方向 {angle.ordinal + 1}</span><h3>{angle.title}</h3><blockquote>{angle.hook}</blockquote><p>{angle.thesis}</p><footer>{angle.evidence_block_ids.length} 条核心证据 <b>选择 →</b></footer></button>)}</div>
+      <div className="section-heading"><div><span className="step-number">02</span><div><h2>选择一个值得讲的角度</h2><p>{modelKnowledgeOnly ? "五个方向来自 AI 作品知识；选择后会生成完整场景。" : "五个方向都来自当前资料；选择后会生成完整场景。"}</p></div></div></div>
+      <div className="angle-grid">{project.angles.map((angle) => <button className="angle-card" key={angle.id} disabled={busy} onClick={() => onChoose(angle.id)}><span>方向 {angle.ordinal + 1}</span><h3>{angle.title}</h3><blockquote>{angle.hook}</blockquote><p>{angle.thesis}</p><footer>{angle.evidence_block_ids.length} 条{modelKnowledgeOnly ? "知识依据" : "核心证据"} <b>选择 →</b></footer></button>)}</div>
     </section>
   );
 }

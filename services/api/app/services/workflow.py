@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from sqlalchemy import select
+from sqlalchemy import text as sql_text
 from sqlalchemy.orm import Session, selectinload
 
 from ..config import Settings
@@ -43,33 +44,114 @@ def project_blocks(db: Session, project_id: str, limit: int | None = None) -> li
         .where(SourceBlock.project_id == project_id)
         .order_by(Source.kind.desc(), SourceBlock.ordinal)
     )
-    if limit:
-        statement = statement.limit(limit)
-    return [
+    rows = list(db.execute(statement).all())
+    if any(source.kind == "primary" for _, source in rows):
+        rows = [(block, source) for block, source in rows if source.kind != "model"]
+    output = [
         {
             "id": block.id,
             "source_id": block.source_id,
             "source_title": source.title,
+            "source_type": source.source_type,
             "locator": block.locator,
             "text": block.text,
         }
-        for block, source in db.execute(statement).all()
+        for block, source in rows
     ]
+    return output[:limit] if limit else output
+
+
+def _create_model_knowledge_source(
+    db: Session, project: Project, text_provider: TextProvider
+) -> Source:
+    existing = db.scalar(
+        select(Source).where(
+            Source.project_id == project.id,
+            Source.kind == "model",
+            Source.source_type == "model_knowledge",
+        )
+    )
+    if existing:
+        return existing
+    knowledge = text_provider.generate_book_knowledge(project.title, project.description)
+    entries = [
+        {
+            "heading": str(item.get("heading", "作品知识")).strip() or "作品知识",
+            "text": str(item.get("text", "")).strip(),
+        }
+        for item in knowledge.get("blocks", [])
+        if str(item.get("text", "")).strip()
+    ]
+    if not entries:
+        raise ValueError("模型没有返回可用于解读的作品知识。")
+    serialized = json.dumps(knowledge, ensure_ascii=False, sort_keys=True)
+    canonical_title = str(knowledge.get("canonical_title") or project.title).strip()
+    source = Source(
+        project_id=project.id,
+        kind="model",
+        source_type="model_knowledge",
+        title=f"{canonical_title} · AI 作品知识",
+        original_filename=None,
+        stored_path=None,
+        checksum=hashlib.sha256(serialized.encode("utf-8")).hexdigest(),
+        char_count=sum(len(item["text"]) for item in entries),
+    )
+    db.add(source)
+    db.flush()
+    for ordinal, entry in enumerate(entries):
+        block = SourceBlock(
+            source_id=source.id,
+            project_id=project.id,
+            ordinal=ordinal,
+            locator={
+                "type": "model_knowledge",
+                "section": entry["heading"],
+                "paragraph_start": 1,
+                "non_source": True,
+            },
+            text=entry["text"],
+            checksum=hashlib.sha256(entry["text"].encode("utf-8")).hexdigest(),
+        )
+        db.add(block)
+        db.flush()
+        db.execute(
+            sql_text(
+                "INSERT INTO source_blocks_fts(block_id, project_id, text) "
+                "VALUES (:block_id, :project_id, :text)"
+            ),
+            {"block_id": block.id, "project_id": project.id, "text": block.text},
+        )
+    project.book_map = {
+        "knowledge_identity": {
+            "canonical_title": canonical_title,
+            "author": knowledge.get("author", ""),
+            "identification_note": knowledge.get("identification_note", ""),
+        }
+    }
+    db.commit()
+    db.refresh(source)
+    return source
 
 
 def analyze_project(db: Session, project: Project, text_provider: TextProvider) -> dict:
+    has_primary = any(source.kind == "primary" for source in project.sources)
+    has_model_knowledge = any(source.kind == "model" for source in project.sources)
+    if not has_primary and not has_model_knowledge:
+        emit_event(db, project.id, "analysis", "大模型正在识别作品并建立知识底稿", 0.12)
+        _create_model_knowledge_source(db, project, text_provider)
     blocks = project_blocks(db, project.id)
     if not blocks:
-        raise ValueError("项目还没有可分析的来源片段。")
-    if not any(source.kind == "primary" for source in project.sources):
-        raise ValueError("请先上传主书。")
+        raise ValueError("项目还没有可分析的作品知识或来源片段。")
     project.status = ProjectStatus.analyzing
     db.commit()
-    emit_event(db, project.id, "analysis", "正在建立可追溯的书籍地图", 0.15)
+    knowledge_identity = (project.book_map or {}).get("knowledge_identity")
+    emit_event(db, project.id, "analysis", "正在建立作品知识地图", 0.25)
     project.book_map = text_provider.build_book_map(project.title, blocks)
+    if knowledge_identity:
+        project.book_map["knowledge_identity"] = knowledge_identity
     db.query(Angle).filter(Angle.project_id == project.id).delete()
     db.commit()
-    emit_event(db, project.id, "analysis", "正在生成五个解读角度", 0.55)
+    emit_event(db, project.id, "analysis", "正在生成五个解读角度", 0.58)
     angles = text_provider.generate_angles(project.title, project.book_map, blocks)
     valid_block_ids = {block["id"] for block in blocks}
     for ordinal, angle in enumerate(angles[:5]):
@@ -114,6 +196,9 @@ def build_storyboard(db: Session, project: Project, text_provider: TextProvider)
     emit_event(db, project.id, "storyboard", "正在生成场景蓝图", 0.2)
     drafts = text_provider.generate_storyboard(project.title, angle_payload, project.style, blocks)
     valid_blocks = {block["id"]: block for block in blocks}
+    model_knowledge_only = bool(blocks) and all(
+        block.get("source_type") == "model_knowledge" for block in blocks
+    )
     db.query(Scene).filter(Scene.project_id == project.id).delete()
     db.flush()
     for ordinal, draft in enumerate(drafts[:18]):
@@ -123,7 +208,11 @@ def build_storyboard(db: Session, project: Project, text_provider: TextProvider)
             title=draft["title"],
             narration=draft["narration"],
             on_screen_text=draft.get("on_screen_text", ""),
-            visual_type=draft.get("visual_type", "text_card"),
+            visual_type=(
+                "text_card"
+                if model_knowledge_only and draft.get("visual_type") == "quote_card"
+                else draft.get("visual_type", "text_card")
+            ),
             visual_prompt=draft.get("visual_prompt", ""),
             duration_seconds=max(3.0, min(45.0, float(draft.get("duration_seconds", 12)))),
             verified=False,
@@ -135,12 +224,19 @@ def build_storyboard(db: Session, project: Project, text_provider: TextProvider)
             block_id = item.get("block_id")
             if block_id not in valid_blocks:
                 block_id = blocks[ordinal % len(blocks)]["id"]
+            source_is_model_knowledge = (
+                valid_blocks[block_id].get("source_type") == "model_knowledge"
+            )
             db.add(
                 Citation(
                     scene_id=scene.id,
                     block_id=block_id,
-                    claim_type=item.get("claim_type", "interpretation"),
-                    quote=item.get("quote", "")[:500],
+                    claim_type=(
+                        "interpretation"
+                        if source_is_model_knowledge
+                        else item.get("claim_type", "interpretation")
+                    ),
+                    quote="" if source_is_model_knowledge else item.get("quote", "")[:500],
                 )
             )
     project.storyboard_revision += 1
@@ -166,6 +262,8 @@ def build_storyboard(db: Session, project: Project, text_provider: TextProvider)
 
 def estimate_project_cost(db: Session, project_id: str) -> float:
     sources = list(db.scalars(select(Source).where(Source.project_id == project_id)))
+    if any(source.kind == "primary" for source in sources):
+        sources = [source for source in sources if source.kind != "model"]
     scenes = list(db.scalars(select(Scene).where(Scene.project_id == project_id)))
     source_chars = sum(item.char_count for item in sources)
     narration_chars = sum(len(item.narration) for item in scenes)
@@ -304,6 +402,8 @@ def _format_locator(locator: dict) -> str:
         return f"第 {start} 页" if start == end else f"第 {start}–{end} 页"
     if locator.get("type") == "epub":
         return f"{locator.get('chapter', '章节')} · 段落 {locator.get('paragraph_start', 1)}"
+    if locator.get("type") == "model_knowledge":
+        return f"AI 作品知识 · {locator.get('section', '知识条目')}（非原文）"
     return f"{locator.get('section', '补充资料')} · 段落 {locator.get('paragraph_start', 1)}"
 
 
@@ -531,7 +631,18 @@ def _write_exports(
     (export_dir / "storyboard.json").write_text(
         json.dumps(storyboard, ensure_ascii=False, indent=2), encoding="utf-8"
     )
-    sources_lines = [f"# 《{project.title}》来源清单", ""]
+    sources = list(db.scalars(select(Source).where(Source.project_id == project.id)))
+    model_knowledge_only = bool(sources) and all(
+        source.source_type == "model_knowledge" for source in sources
+    )
+    sources_lines = [f"# 《{project.title}》内容依据", ""]
+    if model_knowledge_only:
+        sources_lines.extend(
+            [
+                "> 本项目根据大模型的作品知识生成，未核对原著版本，不包含可验证页码或原文引语。",
+                "",
+            ]
+        )
     seen: set[tuple[str, str]] = set()
     for scene in scenes:
         for citation in scene.citations:

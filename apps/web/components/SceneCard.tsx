@@ -19,10 +19,12 @@ const locatorLabel = (locator: Record<string, unknown> | null): string => {
   if (!locator) return "未知位置";
   if (locator.type === "pdf") return `第 ${locator.page_start} 页`;
   if (locator.type === "epub") return `${locator.chapter ?? "章节"} · 段落 ${locator.paragraph_start}`;
+  if (locator.type === "model_knowledge") return `AI 作品知识 · ${locator.section ?? "知识条目"}（非原文）`;
   return `${locator.section ?? "补充资料"} · 段落 ${locator.paragraph_start}`;
 };
 
 export function SceneCard({scene, index, total, onChange, onMove, onDuplicate, onDelete, onRegenerate, onImageUpload, busy}: Props) {
+  const modelKnowledge = scene.citations.length > 0 && scene.citations.every((citation) => citation.locator?.type === "model_knowledge");
   const patch = <K extends keyof Scene>(key: K, value: Scene[K]) => onChange({...scene, [key]: value});
   const patchCitation = (citationIndex: number, value: Scene["citations"][number]) =>
     patch("citations", scene.citations.map((citation, index) => index === citationIndex ? value : citation));
@@ -31,7 +33,7 @@ export function SceneCard({scene, index, total, onChange, onMove, onDuplicate, o
       <header className="scene-header">
         <div className="scene-index">{String(index + 1).padStart(2, "0")}</div>
         <input className="scene-title" value={scene.title} onChange={(event) => patch("title", event.target.value)} aria-label="场景标题" />
-        <span className={`verification ${scene.verified ? "verified" : "pending"}`}>{scene.verified ? "来源已核验" : "待核验"}</span>
+        <span className={`verification ${scene.verified ? "verified" : "pending"}`}>{scene.verified ? (modelKnowledge ? "知识依据已关联" : "来源已核验") : "待核验"}</span>
       </header>
       <div className="scene-grid">
         <label className="field wide">
@@ -62,16 +64,17 @@ export function SceneCard({scene, index, total, onChange, onMove, onDuplicate, o
         </label>
       </div>
       <div className="evidence-list">
-        {scene.citations.map((citation, citationIndex) => (
-          <div className="evidence" key={citation.id || citation.block_id}>
-            <select className="evidence-type" value={citation.claim_type} onChange={(event) => patchCitation(citationIndex, {...citation, claim_type: event.target.value as typeof citation.claim_type, verified: false})}>
+        {scene.citations.map((citation, citationIndex) => {
+          const isModelKnowledge = citation.locator?.type === "model_knowledge";
+          return <div className="evidence" key={citation.id || citation.block_id}>
+            <select className="evidence-type" value={citation.claim_type} disabled={isModelKnowledge} onChange={(event) => patchCitation(citationIndex, {...citation, claim_type: event.target.value as typeof citation.claim_type, verified: false})}>
               <option value="quote">原文</option><option value="fact">事实</option><option value="interpretation">解释</option>
             </select>
             <span>{citation.source_title ? `《${citation.source_title}》` : "来源"} {locatorLabel(citation.locator)}</span>
-            <input className="evidence-quote" value={citation.quote} placeholder="支持段落" onChange={(event) => patchCitation(citationIndex, {...citation, quote: event.target.value, verified: false})} />
+            <input className="evidence-quote" value={citation.quote} disabled={isModelKnowledge} placeholder={isModelKnowledge ? "模型知识不作为原文引用" : "支持段落"} onChange={(event) => patchCitation(citationIndex, {...citation, quote: event.target.value, verified: false})} />
             <button className="icon-button danger" onClick={() => patch("citations", scene.citations.filter((_, index) => index !== citationIndex))}>×</button>
           </div>
-        ))}
+        })}
       </div>
       <footer className="scene-actions">
         <div>

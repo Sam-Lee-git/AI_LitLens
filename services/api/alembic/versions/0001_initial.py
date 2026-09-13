@@ -4,9 +4,8 @@ Revision ID: 0001_initial
 Revises:
 """
 from alembic import op
-
-from app.database import Base
 from app import models  # noqa: F401
+from app.database import Base
 
 revision = "0001_initial"
 down_revision = None

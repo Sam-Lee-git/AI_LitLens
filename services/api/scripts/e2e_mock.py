@@ -7,25 +7,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-import fitz
-
-
-def make_pdf() -> bytes:
-    document = fitz.open()
-    paragraphs = [
-        "It is a truth universally acknowledged that choices reveal character. "
-        "This public-domain test passage discusses responsibility, misunderstanding, "
-        "pride, compassion, and the difficult work of seeing another person clearly."
-    ] * 8
-    for index in range(12):
-        page = document.new_page()
-        page.insert_textbox(
-            fitz.Rect(72, 72, 520, 760),
-            f"Chapter {index + 1}\n\n" + "\n\n".join(paragraphs),
-            fontsize=11,
-        )
-    return document.tobytes()
-
 
 def assert_video(video: Path) -> dict:
     result = subprocess.run(
@@ -58,17 +39,15 @@ def assert_video(video: Path) -> dict:
 
 def run_project(client, run_once, iteration: int) -> dict:
     response = client.post(
-        "/projects", json={"title": f"公共领域文学验收 {iteration}", "description": "mock E2E"}
+        "/projects",
+        json={
+            "title": f"公共领域文学验收 {iteration}",
+            "description": "mock 书名直达 E2E",
+            "auto_analyze": True,
+        },
     )
     response.raise_for_status()
     project_id = response.json()["id"]
-    response = client.post(
-        f"/projects/{project_id}/sources",
-        data={"kind": "primary", "title": "Public-domain literary fixture"},
-        files={"file": ("fixture.pdf", make_pdf(), "application/pdf")},
-    )
-    response.raise_for_status()
-    client.post(f"/projects/{project_id}/analyze").raise_for_status()
     assert run_once()
     project = client.get(f"/projects/{project_id}").json()
     assert project["status"] == "angles_ready"

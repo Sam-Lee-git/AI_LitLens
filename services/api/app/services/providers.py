@@ -15,6 +15,18 @@ from pydantic import BaseModel, Field
 from ..config import Settings
 
 
+class BookKnowledgeBlockOutput(BaseModel):
+    heading: str
+    text: str
+
+
+class BookKnowledgeOutput(BaseModel):
+    canonical_title: str
+    author: str
+    identification_note: str
+    blocks: list[BookKnowledgeBlockOutput] = Field(min_length=8, max_length=16)
+
+
 class AngleOutput(BaseModel):
     title: str
     hook: str
@@ -49,6 +61,9 @@ class StoryboardOutput(BaseModel):
 
 class TextProvider(ABC):
     @abstractmethod
+    def generate_book_knowledge(self, title: str, focus: str) -> dict: ...
+
+    @abstractmethod
     def build_book_map(self, title: str, blocks: list[dict]) -> dict: ...
 
     @abstractmethod
@@ -62,7 +77,7 @@ class TextProvider(ABC):
     def generate_publishing_copy(self, title: str, angle: str) -> str:
         return (
             f"# {title}\n\n{angle}\n\n"
-            "这是一段由 AI 辅助制作的文学解读视听内容。完整出处见随附来源清单。\n\n"
+            "这是一段由 AI 辅助制作的文学解读视听内容。内容依据与出处说明见随附清单。\n\n"
             "## 推荐标签\n\n#文学 #读书 #经典名著 #深度解读\n"
         )
 
@@ -86,6 +101,33 @@ def _excerpt(text: str, limit: int = 120) -> str:
 
 
 class MockTextProvider(TextProvider):
+    def generate_book_knowledge(self, title: str, focus: str) -> dict:
+        topics = [
+            ("作品定位", "作品所处的文学传统、时代语境与最常被讨论的价值问题。"),
+            ("故事结构", "故事如何设置冲突、推进选择，并让人物承担选择带来的后果。"),
+            ("核心人物", "主要人物的欲望、恐惧、盲点与变化构成了解读的基本坐标。"),
+            ("人物关系", "关键关系既推动情节，也暴露权力、责任、爱与误解之间的张力。"),
+            ("核心冲突", "人物的外部处境与内在信念相互挤压，形成作品持续生效的矛盾。"),
+            ("主题线索", "作品可以从自由、责任、身份、欲望、伦理和救赎等维度继续追问。"),
+            ("叙事方法", "视角、节奏、反复出现的意象与场景安排共同塑造读者判断。"),
+            ("关键转折", "决定性的选择会重排人物关系，也让作品的核心命题变得可见。"),
+            ("当代价值", "经典的意义不在提供标准答案，而在帮助今天的读者重新描述困境。"),
+            ("解读边界", "这份底稿来自模型作品知识，不包含原文逐字引语或可核验页码。"),
+        ]
+        focus_note = f" 用户希望重点关注：{focus.strip()}" if focus.strip() else ""
+        return {
+            "canonical_title": title,
+            "author": "演示模式未核定作者",
+            "identification_note": "演示模式按用户输入的作品名建立知识底稿。",
+            "blocks": [
+                {
+                    "heading": heading,
+                    "text": f"《{title}》的{heading}知识底稿：{body}{focus_note}",
+                }
+                for heading, body in topics
+            ],
+        }
+
     def build_book_map(self, title: str, blocks: list[dict]) -> dict:
         chapters = [
             {
@@ -105,13 +147,20 @@ class MockTextProvider(TextProvider):
             ("作者如何把思想写成审判？", "故事不是答案，而是一场持续逼近人物的审问。"),
             ("救赎究竟意味着什么？", "真正的改变不是被原谅，而是重新看见他人。"),
         ]
+        knowledge_only = bool(blocks) and all(
+            block.get("source_type") == "model_knowledge" for block in blocks
+        )
         evidence = [block["id"] for block in blocks[:10]] or [""]
         return [
             {
                 "title": f"{title}：{angle_title}",
                 "hook": hook,
-                "thesis": f"从文本细节出发，解释《{title}》如何呈现这一核心矛盾。",
-                "audience_value": "帮助没有读完原著的观众抓住一个可验证、可讨论的思想入口。",
+                "thesis": (
+                    f"从作品知识出发，解释《{title}》如何呈现这一核心矛盾。"
+                    if knowledge_only
+                    else f"从文本细节出发，解释《{title}》如何呈现这一核心矛盾。"
+                ),
+                "audience_value": "帮助没有读完原著的观众抓住一个清楚、可讨论的思想入口。",
                 "evidence_block_ids": [evidence[index % len(evidence)]],
             }
             for index, (angle_title, hook) in enumerate(templates)
@@ -125,6 +174,7 @@ class MockTextProvider(TextProvider):
         for index in range(12):
             block = usable[index % len(usable)]
             snippet = _excerpt(block["text"], 50)
+            model_knowledge = block.get("source_type") == "model_knowledge"
             if index == 0:
                 narration = (
                     f"为什么《{title}》直到今天仍让人不安？真正值得追问的，是{angle['thesis']}"
@@ -136,7 +186,8 @@ class MockTextProvider(TextProvider):
                 )
                 screen = "经典不是答案，而是一面镜子"
             else:
-                narration = f"文本在这里写道：{snippet}。这段细节让我们看到，{angle['thesis']}"
+                prefix = "作品知识底稿提示" if model_knowledge else "文本在这里写道"
+                narration = f"{prefix}：{snippet}。这段细节让我们看到，{angle['thesis']}"
                 screen = snippet[:32]
             scenes.append(
                 {
@@ -145,7 +196,7 @@ class MockTextProvider(TextProvider):
                     "on_screen_text": screen,
                     "visual_type": "illustration"
                     if index in {0, 1, 3, 5, 7, 9, 10, 11}
-                    else "quote_card",
+                    else ("text_card" if model_knowledge else "quote_card"),
                     "visual_prompt": (
                         f"{style}，文学油画插图，电影感光影，与《{title}》主题相关；"
                         "不要生成文字、标志或现代品牌。"
@@ -154,8 +205,10 @@ class MockTextProvider(TextProvider):
                     "citations": [
                         {
                             "block_id": block["id"],
-                            "claim_type": "interpretation" if index in {0, 11} else "quote",
-                            "quote": snippet.removesuffix("……")[:80],
+                            "claim_type": (
+                                "interpretation" if model_knowledge or index in {0, 11} else "quote"
+                            ),
+                            "quote": "" if model_knowledge else snippet.removesuffix("……")[:80],
                         }
                     ],
                 }
@@ -188,6 +241,17 @@ class OpenAITextProvider(TextProvider):
             raise RuntimeError("模型没有返回可解析的结构化结果。")
         return response.output_parsed
 
+    def generate_book_knowledge(self, title: str, focus: str) -> dict:
+        result = self._parse(
+            "你是严谨的中文文学研究编辑。根据作品名识别最常见的同名文学作品，并建立作品知识底稿。"
+            "底稿覆盖作者与时代、情节结构、核心人物、人物关系、主题、关键转折、叙事方法和当代价值。"
+            "只写你有把握的通识性信息；作品名有歧义时在 identification_note 说明你的识别。"
+            "不要生成原文逐字引语、页码或伪造出处。每个知识块应独立、具体，适合支持后续解释性论断。",
+            {"title": title, "focus": focus},
+            BookKnowledgeOutput,
+        )
+        return result.model_dump()
+
     def build_book_map(self, title: str, blocks: list[dict]) -> dict:
         summaries: list[dict] = []
         for block in blocks:
@@ -212,14 +276,28 @@ class OpenAITextProvider(TextProvider):
     def generate_storyboard(
         self, title: str, angle: dict, style: str, blocks: list[dict]
     ) -> list[dict]:
+        knowledge_only = bool(blocks) and all(
+            block.get("source_type") == "model_knowledge" for block in blocks
+        )
         evidence = [
-            {"id": block["id"], "locator": block["locator"], "text": _excerpt(block["text"], 900)}
+            {
+                "id": block["id"],
+                "source_type": block.get("source_type", "text"),
+                "locator": block["locator"],
+                "text": _excerpt(block["text"], 900),
+            }
             for block in blocks[:80]
         ]
+        source_rule = (
+            "当前 evidence 是模型作品知识底稿，不是原文。所有 citation 的 claim_type 必须为 "
+            "interpretation，quote 必须为空；旁白不得声称逐字引用原著，视觉类型不得使用 quote_card。"
+            if knowledge_only
+            else "直接引文必须逐字来自 evidence；解释性判断使用 interpretation。"
+        )
         result = self._parse(
             "生成12至18个简体中文场景，总旁白900至1300字，适合3至5分钟竖屏文学解读。"
-            "每个场景必须含至少一个 evidence 中真实存在的 block_id。直接引文必须逐字来自 evidence；"
-            "解释性判断使用 interpretation。视觉类型仅允许 illustration、quote_card、text_card、relationship_card。",
+            "每个场景必须含至少一个 evidence 中真实存在的 block_id。"
+            f"{source_rule}视觉类型仅允许 illustration、quote_card、text_card、relationship_card。",
             {"title": title, "angle": angle, "style": style, "evidence": evidence},
             StoryboardOutput,
         )

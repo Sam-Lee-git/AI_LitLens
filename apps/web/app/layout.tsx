@@ -3,7 +3,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "墨镜 · AI 文学解读 Agent",
-  description: "把一本书变成有出处、可编辑、可发布的视听内容",
+  description: "输入名著名称，让 AI 生成可编辑、可发布的文学解读内容",
 };
 
 export default function RootLayout({children}: Readonly<{children: React.ReactNode}>) {

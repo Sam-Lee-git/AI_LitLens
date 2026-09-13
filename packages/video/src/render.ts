@@ -29,15 +29,34 @@ const composition = await selectComposition({
   inputProps,
 });
 
-await renderMedia({
-  composition,
-  serveUrl,
-  codec: "h264",
-  audioCodec: "aac",
-  outputLocation: path.join(outputDir, "video.mp4"),
-  inputProps,
-  overwrite: true,
-});
+if (process.argv.includes("--preview")) {
+  await renderStill({
+    composition,
+    serveUrl,
+    inputProps,
+    frame: Math.min(90, composition.durationInFrames - 1),
+    output: path.join(outputDir, "preview.png"),
+    imageFormat: "png",
+  });
+} else {
+  let lastProgress = -1;
+  await renderMedia({
+    composition,
+    serveUrl,
+    codec: "h264",
+    audioCodec: "aac",
+    outputLocation: path.join(outputDir, "video.mp4"),
+    inputProps,
+    overwrite: true,
+    onProgress: ({progress}) => {
+      const percent = Math.floor(progress * 100);
+      if (percent >= lastProgress + 5 || percent === 100) {
+        lastProgress = percent;
+        console.log(`Render ${percent}%`);
+      }
+    },
+  });
+}
 
 const cover = await selectComposition({serveUrl, id: "LiteraryCover", inputProps});
 await renderStill({

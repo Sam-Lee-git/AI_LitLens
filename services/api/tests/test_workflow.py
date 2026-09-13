@@ -20,6 +20,75 @@ def ready_project(client) -> str:
     return project_id
 
 
+def test_title_only_project_builds_model_knowledge_and_angles(client):
+    response = client.post(
+        "/projects",
+        json={
+            "title": "罪与罚",
+            "description": "重点讨论人物为什么为自己的选择辩护",
+            "auto_analyze": True,
+        },
+    )
+    assert response.status_code == 201, response.text
+    assert response.json()["status"] == "analyzing"
+    project_id = response.json()["id"]
+    assert run_once() is True
+
+    project = client.get(f"/projects/{project_id}").json()
+    assert project["status"] == "angles_ready"
+    assert len(project["angles"]) == 5
+    assert len(project["sources"]) == 1
+    assert project["sources"][0]["kind"] == "model"
+    assert project["sources"][0]["source_type"] == "model_knowledge"
+
+    response = client.put(
+        f"/projects/{project_id}/angle", json={"angle_id": project["angles"][0]["id"]}
+    )
+    assert response.status_code == 202
+    assert run_once() is True
+    board = client.get(f"/projects/{project_id}/storyboard").json()
+    assert 12 <= len(board["scenes"]) <= 18
+    assert all(scene["verified"] for scene in board["scenes"])
+    assert all(
+        citation["claim_type"] == "interpretation" and citation["quote"] == ""
+        for scene in board["scenes"]
+        for citation in scene["citations"]
+    )
+    assert all(
+        citation["locator"]["type"] == "model_knowledge"
+        for scene in board["scenes"]
+        for citation in scene["citations"]
+    )
+
+
+def test_uploaded_original_replaces_model_knowledge_as_storyboard_evidence(client):
+    response = client.post(
+        "/projects", json={"title": "测试名著", "description": "", "auto_analyze": True}
+    )
+    project_id = response.json()["id"]
+    assert run_once() is True
+    payload = pdf_bytes("A verifiable original paragraph about choice and responsibility. " * 100)
+    response = client.post(
+        f"/projects/{project_id}/sources",
+        data={"kind": "primary", "title": "测试名著原文"},
+        files={"file": ("original.pdf", payload, "application/pdf")},
+    )
+    assert response.status_code == 201, response.text
+    client.post(f"/projects/{project_id}/analyze").raise_for_status()
+    assert run_once() is True
+    project = client.get(f"/projects/{project_id}").json()
+    client.put(
+        f"/projects/{project_id}/angle", json={"angle_id": project["angles"][0]["id"]}
+    ).raise_for_status()
+    assert run_once() is True
+    board = client.get(f"/projects/{project_id}/storyboard").json()
+    assert all(
+        citation["locator"]["type"] == "pdf"
+        for scene in board["scenes"]
+        for citation in scene["citations"]
+    )
+
+
 def test_mock_analysis_to_editable_storyboard(client):
     project_id = ready_project(client)
     first = client.post(f"/projects/{project_id}/analyze")

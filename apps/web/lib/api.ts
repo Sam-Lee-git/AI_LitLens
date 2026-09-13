@@ -29,7 +29,10 @@ export const projectApi = {
   list: () => api<Project[]>("/projects"),
   get: (id: string) => api<Project>(`/projects/${id}`),
   create: (title: string, description: string) =>
-    api<Project>("/projects", {method: "POST", body: JSON.stringify({title, description})}),
+    api<Project>("/projects", {
+      method: "POST",
+      body: JSON.stringify({title, description, auto_analyze: true}),
+    }),
   remove: (id: string) => api<void>(`/projects/${id}`, {method: "DELETE"}),
   analyze: (id: string) => api(`/projects/${id}/analyze`, {method: "POST"}),
   chooseAngle: (id: string, angleId: string) =>

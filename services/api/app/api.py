@@ -65,6 +65,15 @@ from .services.workflow import estimate_project_cost, project_blocks, project_sp
 router = APIRouter()
 
 
+def _analysis_payload(project: Project) -> dict:
+    return {
+        "title": project.title,
+        "focus_checksum": hashlib.sha256(project.description.encode("utf-8")).hexdigest(),
+        "source_checksums": sorted(source.checksum for source in project.sources),
+        "mode": "source_grounded" if any(s.kind == "primary" for s in project.sources) else "title",
+    }
+
+
 def _get_project(db: Session, project_id: str) -> Project:
     project = db.scalar(
         select(Project)
@@ -130,6 +139,11 @@ def create_project(payload: ProjectCreate, db: Session = Depends(get_db)) -> Pro
     db.add(project)
     db.commit()
     db.refresh(project)
+    if payload.auto_analyze:
+        project.status = ProjectStatus.analyzing
+        db.commit()
+        enqueue_job(db, project.id, "analyze", _analysis_payload(project))
+        db.refresh(project)
     return project
 
 
@@ -257,13 +271,9 @@ async def add_music(
 @router.post("/projects/{project_id}/analyze", response_model=JobRead, status_code=202)
 def analyze(project_id: str, db: Session = Depends(get_db)):
     project = _get_project(db, project_id)
-    if not any(source.kind == "primary" for source in project.sources):
-        raise HTTPException(status_code=409, detail="请先上传主书。")
     project.status = ProjectStatus.analyzing
     db.commit()
-    return enqueue_job(
-        db, project.id, "analyze", {"source_checksums": [s.checksum for s in project.sources]}
-    )
+    return enqueue_job(db, project.id, "analyze", _analysis_payload(project))
 
 
 @router.put("/projects/{project_id}/angle", response_model=JobRead, status_code=202)
@@ -329,8 +339,12 @@ def update_storyboard(
     }
     retained: set[str] = set()
     valid_blocks = {
-        item
-        for item in db.scalars(select(SourceBlock.id).where(SourceBlock.project_id == project.id))
+        block.id: source.source_type
+        for block, source in db.execute(
+            select(SourceBlock, Source)
+            .join(Source, Source.id == SourceBlock.source_id)
+            .where(SourceBlock.project_id == project.id)
+        ).all()
     }
     for ordinal, draft in enumerate(payload.scenes):
         scene = existing.get(draft.id or "")
@@ -376,12 +390,13 @@ def update_storyboard(
             for citation in draft.citations:
                 if citation.block_id not in valid_blocks:
                     raise HTTPException(status_code=422, detail=f"{draft.title} 包含无效来源片段。")
+                model_knowledge = valid_blocks[citation.block_id] == "model_knowledge"
                 scene.citations.append(
                     Citation(
                         scene_id=scene.id,
                         block_id=citation.block_id,
-                        claim_type=citation.claim_type,
-                        quote=citation.quote,
+                        claim_type="interpretation" if model_knowledge else citation.claim_type,
+                        quote="" if model_knowledge else citation.quote,
                     )
                 )
     for scene_id, scene in existing.items():

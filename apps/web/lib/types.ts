@@ -12,7 +12,7 @@ export type ProjectStatus =
 
 export interface Source {
   id: string;
-  kind: "primary" | "supplement";
+  kind: "primary" | "supplement" | "model";
   source_type: string;
   title: string;
   original_filename: string | null;
